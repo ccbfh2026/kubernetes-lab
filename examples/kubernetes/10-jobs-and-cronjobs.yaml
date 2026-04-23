@@ -1,0 +1,188 @@
+# 1. Create a dedicated namespace for Job and CronJob examples
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: job-examples
+  labels:
+    demo: kubernetes
+    section: jobs
+
+---
+# 2. ConfigMap for job scripts
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: job-scripts
+  namespace: job-examples
+data:
+  process-data.sh: |
+    #!/bin/sh
+    echo "Starting data processing job at $(date)"
+    echo "Job name: $JOB_NAME"
+    echo "Processing data..."
+    # Simulate work
+    for i in $(seq 1 5); do
+      echo "Processing batch $i of 5..."
+      sleep 2
+    done
+    echo "Data processing completed successfully at $(date)"
+    echo "Results saved to storage."
+
+---
+# 3. Basic Job
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: simple-job
+  namespace: job-examples
+spec:
+  # Number of completions required
+  completions: 1
+  # Number of jobs to run in parallel
+  parallelism: 1
+  # Number of retries if job fails
+  backoffLimit: 3
+  template:
+    metadata:
+      name: simple-job
+    spec:
+      # Do not restart on completion
+      restartPolicy: OnFailure
+      containers:
+      - name: worker
+        image: busybox:stable
+        command: ["sh", "-c", "echo Job starting at $(date); sleep 10; echo Job completed at $(date)"]
+
+---
+# 4. Job with Environment Variables
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: job-with-env
+  namespace: job-examples
+spec:
+  completions: 1
+  parallelism: 1
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: data-processor
+        image: busybox:stable
+        command: ["sh", "/scripts/process-data.sh"]
+        env:
+        - name: JOB_NAME
+          value: "data-processor-job"
+        volumeMounts:
+        - name: scripts-volume
+          mountPath: /scripts
+      volumes:
+      - name: scripts-volume
+        configMap:
+          name: job-scripts
+          defaultMode: 0755
+
+---
+# 5. Job with Parallelism
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: parallel-job
+  namespace: job-examples
+spec:
+  completions: 5
+  parallelism: 2  # Run 2 pods in parallel
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: worker
+        image: busybox:stable
+        command: 
+        - "/bin/sh"
+        - "-c"
+        - |
+          echo "Starting worker pod $HOSTNAME at $(date)"
+          sleep $((5 + RANDOM % 5))  # Random sleep to simulate different work durations
+          echo "Worker pod $HOSTNAME completed at $(date)"
+
+---
+# 6. Basic CronJob
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: hello-cronjob
+  namespace: job-examples
+spec:
+  # Run every minute for demo purposes
+  schedule: "*/1 * * * *"
+  # Concurrency policy: Allow, Forbid, or Replace
+  concurrencyPolicy: Forbid
+  # Keep 3 successful job history, 1 failed
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+          - name: hello
+            image: busybox:stable
+            command: ["sh", "-c", "echo Hello from CronJob! Current time is $(date)"]
+
+---
+# 7. CronJob with custom schedule and job data
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: db-backup-cronjob
+  namespace: job-examples
+spec:
+  # Run every 5 minutes for demo purposes 
+  # In production this might be "0 0 * * *" for daily at midnight
+  schedule: "*/5 * * * *"
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+          - name: backup
+            image: busybox:stable
+            command: 
+            - "/bin/sh"
+            - "-c"
+            - |
+              echo "Database backup starting at $(date)"
+              echo "Connecting to database..."
+              sleep 3
+              echo "Backing up data..."
+              sleep 5
+              echo "Backup completed at $(date)"
+              echo "Backup job completed successfully"
+
+---
+# 8. Demo instructions:
+#
+# Apply the manifest to create Jobs and CronJobs:
+# kubectl apply -f 10-jobs-and-cronjobs.yaml
+#
+# Check the status of jobs:
+# kubectl get jobs -n job-examples
+#
+# View the logs from a job:
+# kubectl logs -n job-examples job/simple-job
+#
+# View the parallel job pods:
+# kubectl get pods -n job-examples -l job-name=parallel-job
+#
+# Check the status of cronjobs:
+# kubectl get cronjobs -n job-examples
+#
+# Alternatively, you can find the pod name first and then view logs:
+# kubectl get pods -n job-examples --selector=cronjob-name=hello-cronjob --sort-by=.metadata.creationTimestamp
+# kubectl logs -n job-examples POD_NAME_FROM_ABOVE

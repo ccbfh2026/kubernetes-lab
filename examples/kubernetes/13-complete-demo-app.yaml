@@ -1,0 +1,497 @@
+# Complete Demo Application for Kind Cluster
+# This demo includes:
+# - Frontend web app
+# - Backend API
+# - Database with persistence
+# - ConfigMaps and Secrets
+# - Services and Ingress
+
+# 1. Create the demo namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo-app
+  labels:
+    app: demo
+    environment: demo
+
+---
+# 2. ConfigMap for application configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: demo-app
+data:
+  APP_ENV: "development"
+  BACKEND_URL: "http://backend-service:8080"
+  FRONTEND_CONFIG: |
+    {
+      "title": "Kubernetes Demo Application",
+      "refreshInterval": 10,
+      "theme": "light"
+    }
+  index.html: |
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>Demo Application</title>
+      <style>
+        body { font-family: Arial, sans-serif; margin: 0; padding: 20px; color: #333; }
+        .container { max-width: 800px; margin: 0 auto; background: #f8f8f8; padding: 20px; border-radius: 5px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        h1 { color: #4285f4; }
+        .status { padding: 15px; background: #e8f5e9; border-radius: 4px; margin: 20px 0; }
+        .form-group { margin-bottom: 15px; }
+        input, button { padding: 8px; border-radius: 4px; border: 1px solid #ddd; }
+        button { background: #4285f4; color: white; cursor: pointer; border-color: #4285f4; }
+        .result { margin-top: 20px; background: #f1f1f1; padding: 10px; border-radius: 4px; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <h1>Kubernetes Demo Application</h1>
+        <div class="status">
+          <p><strong>Pod Name:</strong> <span id="pod-name">Loading...</span></p>
+          <p><strong>Environment:</strong> <span id="environment">Loading...</span></p>
+          <p><strong>Backend Status:</strong> <span id="backend-status">Checking...</span></p>
+        </div>
+        
+        <h2>Send Message to Backend</h2>
+        <div class="form-group">
+          <input type="text" id="message" placeholder="Enter a message">
+          <button onclick="sendMessage()">Send</button>
+        </div>
+        
+        <div class="result" id="result"></div>
+      </div>
+      
+      <script>
+        // Update pod information
+        document.getElementById('pod-name').textContent = window.location.hostname;
+        
+        // Get environment from ConfigMap
+        fetch('/config.json')
+          .then(response => response.json())
+          .then(data => {
+            document.getElementById('environment').textContent = data.APP_ENV || 'Unknown';
+          })
+          .catch(error => {
+            document.getElementById('environment').textContent = 'Error loading';
+          });
+        
+        // Check backend status
+        function checkBackend() {
+          fetch('/api/health')
+            .then(response => {
+              if (response.ok) {
+                document.getElementById('backend-status').textContent = 'Connected';
+                document.getElementById('backend-status').style.color = 'green';
+              } else {
+                throw new Error('Backend not available');
+              }
+            })
+            .catch(error => {
+              document.getElementById('backend-status').textContent = 'Disconnected';
+              document.getElementById('backend-status').style.color = 'red';
+            });
+        }
+        
+        // Send message to backend
+        function sendMessage() {
+          const message = document.getElementById('message').value;
+          
+          if (!message) {
+            alert('Please enter a message');
+            return;
+          }
+          
+          fetch('/api/messages', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message })
+          })
+          .then(response => response.json())
+          .then(data => {
+            document.getElementById('result').innerHTML = `
+              <p><strong>Status:</strong> ${data.status || 'Unknown'}</p>
+              <p><strong>Message:</strong> ${data.message || 'No message'}</p>
+              <p><strong>Timestamp:</strong> ${data.timestamp || 'No timestamp'}</p>
+              <p><strong>Processed By:</strong> ${data.pod || 'Unknown'}</p>
+            `;
+          })
+          .catch(error => {
+            document.getElementById('result').innerHTML = `<p>Error: Could not connect to backend</p>`;
+          });
+        }
+        
+        // Check backend on load
+        checkBackend();
+        // Periodically check backend
+        setInterval(checkBackend, 10000);
+      </script>
+    </body>
+    </html>
+
+---
+# 3. Secret for database credentials
+apiVersion: v1
+kind: Secret
+metadata:
+  name: db-credentials
+  namespace: demo-app
+type: Opaque
+data:
+  # echo -n "demo-user" | base64
+  username: ZGVtby11c2Vy
+  # echo -n "demo-password" | base64
+  password: ZGVtby1wYXNzd29yZA==
+
+---
+# 4. Frontend Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: demo-app
+  labels:
+    app: frontend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:stable
+        ports:
+        - containerPort: 80
+        volumeMounts:
+        - name: config-volume
+          mountPath: /usr/share/nginx/html
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+      volumes:
+      - name: config-volume
+        configMap:
+          name: app-config
+          items:
+          - key: index.html
+            path: index.html
+
+---
+# 5. Backend Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: demo-app
+  labels:
+    app: backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      containers:
+      - name: backend
+        image: busybox:stable
+        command:
+        - "/bin/sh"
+        - "-c"
+        - |
+          # Simple mock API server
+          cat > /tmp/api.sh << 'EOF'
+          #!/bin/sh
+          echo "API Server starting on port 8080"
+          
+          # Create response for given path and method
+          handle_request() {
+            local path=$1
+            local method=$2
+            local body=$3
+            
+            if [ "$path" = "/health" ] && [ "$method" = "GET" ]; then
+              printf "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"status\":\"up\",\"pod\":\"$(hostname)\"}"
+            elif [ "$path" = "/messages" ] && [ "$method" = "POST" ]; then
+              printf "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"status\":\"success\",\"message\":\"Message received\",\"timestamp\":\"$(date -Iseconds)\",\"pod\":\"$(hostname)\"}"
+            else
+              printf "HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\n\r\nNot Found"
+            fi
+          }
+          
+          # Start server
+          while true; do
+            # Accept connection
+            echo "Waiting for connection..."
+            (
+              read -r request
+              method=$(echo "$request" | cut -d ' ' -f1)
+              path=$(echo "$request" | cut -d ' ' -f2 | cut -d '?' -f1)
+              path=${path#/api}  # Remove /api prefix
+              
+              echo "Request: $method $path"
+              
+              # Read headers
+              content_length=0
+              while read -r line; do
+                line=$(echo "$line" | tr -d '\r\n')
+                [ -z "$line" ] && break
+                if echo "$line" | grep -qi "Content-Length:"; then
+                  content_length=$(echo "$line" | cut -d ' ' -f2)
+                fi
+              done
+              
+              # Read body if content length > 0
+              body=""
+              if [ "$content_length" -gt 0 ]; then
+                read -r -n "$content_length" body
+                echo "Body: $body"
+              fi
+              
+              # Generate response
+              handle_request "$path" "$method" "$body"
+            ) | nc -l -p 8080
+          done
+          EOF
+          
+          chmod +x /tmp/api.sh
+          /tmp/api.sh
+        ports:
+        - containerPort: 8080
+        env:
+        - name: DB_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: db-credentials
+              key: username
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: db-credentials
+              key: password
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+
+---
+# 6. Database StatefulSet with persistent storage
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: database
+  namespace: demo-app
+  labels:
+    app: database
+spec:
+  serviceName: database-headless
+  replicas: 1
+  selector:
+    matchLabels:
+      app: database
+  template:
+    metadata:
+      labels:
+        app: database
+    spec:
+      containers:
+      - name: database
+        image: busybox:stable
+        command:
+        - "/bin/sh"
+        - "-c"
+        - |
+          # Simple mock database server
+          mkdir -p /data/db
+          echo "Database server starting..."
+          echo "Database initialized with config:" > /data/db/init.log
+          echo "Username: $DB_USERNAME" >> /data/db/init.log
+          echo "Timestamp: $(date -Iseconds)" >> /data/db/init.log
+          echo "Pod: $(hostname)" >> /data/db/init.log
+          
+          echo "Database ready on port 5432"
+          
+          # Stay running
+          tail -f /data/db/init.log
+        ports:
+        - containerPort: 5432
+        env:
+        - name: DB_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: db-credentials
+              key: username
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: db-credentials
+              key: password
+        volumeMounts:
+        - name: data
+          mountPath: /data
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: 100Mi
+
+---
+# 7. Frontend Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-service
+  namespace: demo-app
+spec:
+  selector:
+    app: frontend
+  ports:
+  - port: 80
+    targetPort: 80
+  type: ClusterIP
+
+---
+# 8. Backend Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-service
+  namespace: demo-app
+spec:
+  selector:
+    app: backend
+  ports:
+  - port: 8080
+    targetPort: 8080
+  type: ClusterIP
+
+---
+# 9. Database Service (Headless)
+apiVersion: v1
+kind: Service
+metadata:
+  name: database-headless
+  namespace: demo-app
+spec:
+  selector:
+    app: database
+  ports:
+  - port: 5432
+    targetPort: 5432
+  clusterIP: None
+
+---
+# 10. Regular Database Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: database-service
+  namespace: demo-app
+spec:
+  selector:
+    app: database
+  ports:
+  - port: 5432
+    targetPort: 5432
+  type: ClusterIP
+
+---
+# 11. Ingress for the application
+# Note: This requires ingress controller to be installed on Kind
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: demo-ingress
+  namespace: demo-app
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+    # For demo purposes, add service mapping in annotations
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      proxy_set_header Host $host;
+      proxy_set_header X-Real-IP $remote_addr;
+spec:
+  rules:
+  - host: demo.local  # Add to /etc/hosts: 127.0.0.1 demo.local
+    http:
+      paths:
+      - path: /()(.*)
+        pathType: Prefix
+        backend:
+          service:
+            name: frontend-service
+            port:
+              number: 80
+      - path: /api(/|$)(.*)
+        pathType: Prefix
+        backend:
+          service:
+            name: backend-service
+            port:
+              number: 8080
+
+---
+# 12. Demo instructions:
+#
+# Setup:
+#
+# 1. Create a Kind cluster with ingress support:
+#    kind create cluster --config kind-config.yaml
+#
+# 2. Install ingress controller:
+#    kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
+#    kubectl wait --namespace ingress-nginx --for=condition=ready pod --selector=app.kubernetes.io/component=controller --timeout=90s
+#
+# 3. Apply the demo app manifests:
+#    kubectl apply -f complete-demo-app.yaml
+#
+# 4. Add to /etc/hosts:
+#    127.0.0.1 demo.local
+#
+# 5. Access the application:
+#    http://demo.local/
+#
+# Demo usage:
+#
+# - Observe frontend communication with backend
+# - Scale deployments up and down:
+#   kubectl scale deployment/frontend -n demo-app --replicas=3
+#   kubectl scale deployment/backend -n demo-app --replicas=1
+#
+# - Check logs:
+#   kubectl logs -n demo-app -l app=frontend
+#   kubectl logs -n demo-app -l app=backend
+#   kubectl logs -n demo-app -l app=database
+#
+# - Check persistent storage:
+#   kubectl exec -it -n demo-app database-0 -- cat /data/db/init.log
+#
+# - Delete a pod and see it recreated:
+#   kubectl delete pod -n demo-app -l app=frontend --now

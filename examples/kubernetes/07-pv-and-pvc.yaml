@@ -1,0 +1,235 @@
+# 1. Create a dedicated namespace for storage examples
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: storage-examples
+  labels:
+    demo: kubernetes
+    section: storage
+
+---
+# 2. StorageClass for local development (kind doesn't have CSI drivers)
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: local-storage
+  namespace: storage-examples
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+
+---
+# 3. PersistentVolume with hostPath (works in Kind)
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: local-pv
+spec:
+  capacity:
+    storage: 100Mi
+  volumeMode: Filesystem
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-storage
+  hostPath:
+    path: /tmp/kube-data
+    type: DirectoryOrCreate
+
+---
+# 4. Basic PersistentVolumeClaim
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: app-data-claim
+  namespace: storage-examples
+spec:
+  accessModes:
+    - ReadWriteOnce
+  volumeMode: Filesystem
+  resources:
+    requests:
+      storage: 100Mi
+  storageClassName: local-storage
+
+---
+# 5. ConfigMap with demo content
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: demo-content
+  namespace: storage-examples
+data:
+  data.txt: |
+    This is persistent data stored on a volume.
+    Created for Kubernetes storage demonstration.
+    
+    If you can read this file from multiple pods,
+    the persistent volume is working correctly!
+
+---
+# 6. Job that writes data to the persistent volume
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: volume-writer
+  namespace: storage-examples
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: writer
+        image: busybox:stable
+        command: 
+        - sh
+        - -c
+        - |
+          # Copy the content from ConfigMap to PV
+          cp /config/data.txt /data/data.txt
+          # Add timestamp to prove when it was written
+          echo "" >> /data/data.txt
+          echo "Last updated: $(date)" >> /data/data.txt
+          # Create a second file to demonstrate multiple files
+          echo "Volume ID: $(cat /proc/sys/kernel/random/uuid | cut -c1-8)" > /data/volume-info.txt
+          # Show what was written
+          echo "=== Files in the persistent volume ==="
+          ls -la /data
+          echo "=== Content of data.txt ==="
+          cat /data/data.txt
+          echo "=== Content of volume-info.txt ==="
+          cat /data/volume-info.txt
+        volumeMounts:
+        - name: data-volume
+          mountPath: /data
+        - name: config-volume
+          mountPath: /config
+      volumes:
+      - name: data-volume
+        persistentVolumeClaim:
+          claimName: app-data-claim
+      - name: config-volume
+        configMap:
+          name: demo-content
+
+---
+# 7. Pod that reads from the persistent volume
+apiVersion: v1
+kind: Pod
+metadata:
+  name: volume-reader
+  namespace: storage-examples
+spec:
+  containers:
+  - name: reader
+    image: busybox:stable
+    command:
+    - sh
+    - -c
+    - |
+      echo "Waiting for data to be available..."
+      while [ ! -f /data/data.txt ]; do
+        sleep 1
+      done
+      echo "=== Reading data from persistent volume ==="
+      ls -la /data
+      echo "=== Content of data.txt ==="
+      cat /data/data.txt
+      echo "=== Content of volume-info.txt ==="
+      cat /data/volume-info.txt
+      echo "=== Demonstration complete ==="
+      # Keep the pod running to allow exec into it
+      echo "Pod will remain running for demonstration. Use 'kubectl delete pod volume-reader -n storage-examples' to clean up."
+      tail -f /dev/null
+    volumeMounts:
+    - name: data-volume
+      mountPath: /data
+      readOnly: true
+  volumes:
+  - name: data-volume
+    persistentVolumeClaim:
+      claimName: app-data-claim
+
+---
+# 8. Second reader pod to demonstrate multiple consumers (if ReadWriteMany is supported)
+apiVersion: v1
+kind: Pod
+metadata:
+  name: second-reader
+  namespace: storage-examples
+spec:
+  containers:
+  - name: reader
+    image: busybox:stable
+    command:
+    - sh
+    - -c
+    - |
+      echo "Second reader waiting for data..."
+      while [ ! -f /data/data.txt ]; do
+        sleep 1
+      done
+      echo "=== Second reader accessing persistent volume ==="
+      ls -la /data
+      echo "=== Content of data.txt from second reader ==="
+      cat /data/data.txt
+      echo "=== Content of volume-info.txt from second reader ==="
+      cat /data/volume-info.txt
+      echo "=== Second reader demonstration complete ==="
+      # Keep the pod running to allow exec into it
+      echo "Pod will remain running for demonstration. Use 'kubectl delete pod second-reader -n storage-examples' to clean up."
+      tail -f /dev/null
+    volumeMounts:
+    - name: data-volume
+      mountPath: /data
+      readOnly: true
+  volumes:
+  - name: data-volume
+    persistentVolumeClaim:
+      claimName: app-data-claim
+
+---
+# 9. Demo instructions
+# 
+# === PERSISTENT VOLUME DEMO (NO PORT-FORWARD REQUIRED) ===
+#
+# 1. Clean up any previous resources (if needed):
+#    kubectl delete namespace storage-examples
+#
+# 2. Apply all resources in this file:
+#    kubectl apply -f 07-pv-and-pvc.yaml
+#
+# 3. Check the status of PV and PVC:
+#    kubectl get pv
+#    kubectl get pvc -n storage-examples
+#
+# 4. Watch the job that writes data to the volume:
+#    kubectl wait --for=condition=complete job/volume-writer -n storage-examples --timeout=30s
+#    kubectl logs job/volume-writer -n storage-examples
+#    # You should see the content that was written to the persistent volume
+#
+# 5. Check the reader pod that accesses the same data:
+#    kubectl wait --for=condition=ready pod/volume-reader -n storage-examples --timeout=30s
+#    kubectl logs volume-reader -n storage-examples
+#    # You should see the same content that was written by the writer job
+#
+# 6. Check the second reader pod (may fail if your storage class doesn't support ReadWriteMany):
+#    kubectl logs second-reader -n storage-examples
+#    # If successful, you'll see the same data again
+#
+# 7. Demonstrate persistence by deleting and recreating the reader pod:
+#    kubectl delete pod volume-reader -n storage-examples
+#    kubectl apply -f 07-pv-and-pvc.yaml
+#    kubectl wait --for=condition=ready pod/volume-reader -n storage-examples --timeout=30s
+#    kubectl logs volume-reader -n storage-examples
+#    # You should see the same data, proving persistence
+#
+# 8. For interactive exploration, you can exec into the reader pod:
+#    kubectl exec -it volume-reader -n storage-examples -- sh
+#    # Inside the pod, you can run:
+#    # ls -la /data
+#    # cat /data/data.txt
+#    # cat /data/volume-info.txt
+#    # exit
+#
+# 9. Clean up:
+#    kubectl delete -f 07-pv-and-pvc.yaml

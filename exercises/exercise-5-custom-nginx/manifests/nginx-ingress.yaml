@@ -1,0 +1,18 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: custom-nginx-ingress
+  annotations:
+    # Important: In newer NGINX ingress controllers, missing this annotation means you might not get traffic routed correctly depending on setup, though usually root path is fine.
+    nginx.ingress.kubernetes.io/rewrite-target: /
+spec:
+  rules:
+  - http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: custom-nginx
+            port:
+              number: 80

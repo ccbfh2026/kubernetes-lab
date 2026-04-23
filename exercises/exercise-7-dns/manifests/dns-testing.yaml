@@ -1,0 +1,113 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dns-test
+---
+# Simple service in default namespace
+apiVersion: v1
+kind: Service
+metadata:
+  name: simple-service
+  namespace: default
+spec:
+  selector:
+    app: dns-test
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8080
+---
+# Test pod in default namespace
+apiVersion: v1
+kind: Pod
+metadata:
+  name: dns-test
+  namespace: default
+  labels:
+    app: dns-test
+spec:
+  containers:
+  - name: dns-test
+    image: nicolaka/netshoot
+    command: 
+      - sleep
+      - "3600"
+    resources:
+      limits:
+        memory: "128Mi"
+        cpu: "100m"
+---
+# Service in different namespace
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-service
+  namespace: dns-test
+spec:
+  selector:
+    app: backend
+  ports:
+  - port: 8080
+    targetPort: 8080
+---
+# Pod in different namespace
+apiVersion: v1
+kind: Pod
+metadata:
+  name: backend-pod
+  namespace: dns-test
+  labels:
+    app: backend
+spec:
+  containers:
+  - name: backend
+    image: nicolaka/netshoot
+    command: 
+      - sleep
+      - "3600"
+    resources:
+      limits:
+        memory: "128Mi"
+        cpu: "100m"
+---
+# StatefulSet with headless service for DNS testing
+apiVersion: v1
+kind: Service
+metadata:
+  name: stateful-svc
+  namespace: default
+spec:
+  clusterIP: None  # Headless service
+  selector:
+    app: stateful
+  ports:
+  - port: 80
+    targetPort: 8080
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: stateful-app
+  namespace: default
+spec:
+  serviceName: "stateful-svc"
+  replicas: 3
+  selector:
+    matchLabels:
+      app: stateful
+  template:
+    metadata:
+      labels:
+        app: stateful
+    spec:
+      containers:
+      - name: stateful
+        image: nicolaka/netshoot
+        command: 
+          - sleep
+          - "3600"
+        resources:
+          limits:
+            memory: "128Mi"
+            cpu: "100m"

@@ -1,0 +1,42 @@
+---
+# ConfigMap with custom hosts entries
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: custom-hosts
+  namespace: default
+data:
+  hosts: |
+    # Custom hosts entries
+    127.0.0.1 localhost
+    ::1 localhost
+    
+    # Custom entries for testing
+    192.168.1.100 custom-host
+    192.168.1.101 another-custom-host
+---
+# Pod that mounts the custom hosts file
+apiVersion: v1
+kind: Pod
+metadata:
+  name: custom-dns
+  namespace: default
+spec:
+  containers:
+  - name: custom-dns
+    image: nicolaka/netshoot
+    command: 
+      - sleep
+      - "3600"
+    resources:
+      limits:
+        memory: "128Mi"
+        cpu: "100m"
+    volumeMounts:
+    - name: hosts-volume
+      mountPath: /etc/hosts
+      subPath: hosts
+  volumes:
+  - name: hosts-volume
+    configMap:
+      name: custom-hosts

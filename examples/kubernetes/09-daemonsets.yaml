@@ -1,0 +1,118 @@
+# 1. Create a dedicated namespace for DaemonSet examples
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: daemonset-examples
+  labels:
+    demo: kubernetes
+    section: daemonsets
+
+---
+# 2. ConfigMap for the node monitor script
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: node-monitor-config
+  namespace: daemonset-examples
+data:
+  monitor.sh: |
+    #!/bin/sh
+    echo "Node Monitor starting on $(hostname)"
+    echo "Monitor running on node: $(hostname)" > /var/log/node-monitor.log
+    echo "System information:" >> /var/log/node-monitor.log
+    echo "-----------------" >> /var/log/node-monitor.log
+    uname -a >> /var/log/node-monitor.log
+    echo >> /var/log/node-monitor.log
+    
+    while true; do
+      # Get current timestamp
+      timestamp=$(date "+%Y-%m-%d %H:%M:%S")
+      
+      # Memory usage
+      echo "$timestamp - Memory Usage:" >> /var/log/node-monitor.log
+      free -m >> /var/log/node-monitor.log
+      echo >> /var/log/node-monitor.log
+      
+      # Disk usage
+      echo "$timestamp - Disk Usage:" >> /var/log/node-monitor.log
+      df -h >> /var/log/node-monitor.log
+      echo >> /var/log/node-monitor.log
+      
+      # Process information
+      echo "$timestamp - Top Processes:" >> /var/log/node-monitor.log
+      ps aux | sort -nrk 3,3 | head -5 >> /var/log/node-monitor.log
+      echo "-----------------" >> /var/log/node-monitor.log
+      
+      echo "Monitor running... logs available at /var/log/node-monitor.log"
+      sleep 30
+    done
+
+---
+# 3. DaemonSet Example - Simple Node Monitoring Agent
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: node-monitor
+  namespace: daemonset-examples
+  labels:
+    app: node-monitor
+spec:
+  selector:
+    matchLabels:
+      app: node-monitor
+  template:
+    metadata:
+      labels:
+        app: node-monitor
+    spec:
+      tolerations:
+      # This toleration is to have the daemonset running on control plane nodes
+      - key: node-role.kubernetes.io/control-plane
+        operator: Exists
+        effect: NoSchedule
+      - key: node-role.kubernetes.io/master
+        operator: Exists
+        effect: NoSchedule
+      containers:
+      - name: node-monitor
+        image: busybox:stable
+        command: ["/bin/sh", "/scripts/monitor.sh"]
+        resources:
+          limits:
+            cpu: 100m
+            memory: 100Mi
+          requests:
+            cpu: 10m
+            memory: 50Mi
+        volumeMounts:
+        - name: log-volume
+          mountPath: /var/log
+        - name: script-volume
+          mountPath: /scripts
+      volumes:
+      - name: log-volume
+        emptyDir: {}
+      - name: script-volume
+        configMap:
+          name: node-monitor-config
+          defaultMode: 0755
+
+---
+# 4. Demo instructions:
+# 
+# Apply the manifest to create the DaemonSet:
+# kubectl apply -f 09-daemonsets.yaml
+#
+# Check that one pod is created on each node:
+# kubectl get daemonset -n daemonset-examples
+# kubectl get pods -n daemonset-examples -o wide
+#
+# Check the logs from a specific node monitor pod:
+# kubectl logs -n daemonset-examples -l app=node-monitor --tail=20
+#
+# View the running script inside a monitor pod:
+# kubectl exec -n daemonset-examples -it $(kubectl get pods -n daemonset-examples -l app=node-monitor -o jsonpath='{.items[0].metadata.name}') -- cat /var/log/node-monitor.log
+
+# Adding or removing a node will automatically add or remove a DaemonSet pod
+# When you add a node to your kind cluster, a new pod will be created automatically
+# When you remove a node, the pod will be removedset-examples -l app=node-monitor -o jsonpath='{.items[0].metadata.name}') -- cat /scripts/monitor.sh

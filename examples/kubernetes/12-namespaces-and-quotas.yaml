@@ -1,0 +1,148 @@
+# Kubernetes Namespaces Example
+# This file demonstrates namespaces and resource isolation
+
+# 1. Create Development Namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: development
+  labels:
+    environment: dev
+
+---
+# 2. Create Production Namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: production
+  labels:
+    environment: prod
+
+---
+# 3. ResourceQuota for Production Namespace
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: prod-quota
+  namespace: production
+spec:
+  hard:
+    pods: "10"
+    requests.cpu: "1"
+    requests.memory: 1Gi
+    limits.cpu: "2"
+    limits.memory: 2Gi
+
+---
+# 4. LimitRange for Production Namespace (default resource limits)
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: prod-limits
+  namespace: production
+spec:
+  limits:
+  - default:
+      memory: 256Mi
+      cpu: 200m
+    defaultRequest:
+      memory: 128Mi
+      cpu: 100m
+    type: Container
+
+---
+# 5. Development Pod (minimal limits)
+apiVersion: v1
+kind: Pod
+metadata:
+  name: dev-app
+  namespace: development
+  labels:
+    app: demo-app
+spec:
+  containers:
+  - name: dev-container
+    image: nginx:stable
+    ports:
+    - containerPort: 80
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "50m"
+      limits:
+        memory: "128Mi"
+        cpu: "100m"
+
+---
+# 6. Development Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: dev-service
+  namespace: development
+spec:
+  selector:
+    app: demo-app
+  ports:
+  - port: 80
+    targetPort: 80
+
+---
+# 7. Production Pod (will get default limits from LimitRange)
+apiVersion: v1
+kind: Pod
+metadata:
+  name: prod-app
+  namespace: production
+  labels:
+    app: demo-app
+spec:
+  containers:
+  - name: prod-container
+    image: nginx:stable
+    ports:
+    - containerPort: 80
+    # No explicit resources - will use LimitRange defaults
+
+---
+# 8. Production Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: prod-service
+  namespace: production
+spec:
+  selector:
+    app: demo-app
+  ports:
+  - port: 80
+    targetPort: 80
+
+---
+# 9. Demo instructions:
+#
+# Apply the manifest to create the namespaces and resources:
+# kubectl apply -f 12-namespaces-and-quotas.yaml
+#
+# View the namespaces:
+# kubectl get namespaces
+# kubectl get namespaces --show-labels
+#
+# Check resource quotas:
+# kubectl describe namespace production
+# kubectl get resourcequota -n production
+#
+# Check limit ranges:
+# kubectl get limitrange -n production
+# kubectl describe limitrange prod-limits -n production
+#
+# Compare resources assigned to pods:
+# kubectl describe pod dev-app -n development | grep -A 5 Requests
+# kubectl describe pod prod-app -n production | grep -A 5 Requests
+#
+# Try to create a pod that exceeds the quota:
+# kubectl run quota-test --image=nginx -n production --overrides='{"spec":{"containers":[{"name":"quota-test","image":"nginx","resources":{"requests":{"cpu":"2","memory":"2Gi"}}}]}}'
+#
+# View all resources in each namespace:
+# kubectl get all -n development
+# kubectl get all -n production

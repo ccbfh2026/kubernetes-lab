@@ -1,0 +1,98 @@
+# 1. Create a dedicated namespace for deployment examples
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: deployment-examples
+  labels:
+    demo: kubernetes
+    section: deployments
+
+---
+# 2. Basic Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+  namespace: deployment-examples
+  labels:
+    app: nginx
+    demo: kubernetes
+spec:
+  replicas: 2  # Using fewer replicas for Kind cluster
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:stable
+        ports:
+        - containerPort: 80
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+
+---
+# 3. Deployment with Rolling Update Strategy
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rolling-deployment
+  namespace: deployment-examples
+  labels:
+    app: webapp
+    demo: kubernetes
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1        # How many pods we can add at a time
+      maxUnavailable: 0  # How many pods can be unavailable during the update
+  selector:
+    matchLabels:
+      app: webapp
+  template:
+    metadata:
+      labels:
+        app: webapp
+    spec:
+      containers:
+      - name: webapp
+        image: nginx:stable
+        ports:
+        - containerPort: 80
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+
+---
+# 4. Service for deployments (to demonstrate connectivity)
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-service
+  namespace: deployment-examples
+spec:
+  selector:
+    app: nginx
+  ports:
+  - port: 80
+    targetPort: 80
+  type: ClusterIP
+
+---
+# 5. Command to check deployments, pods and services
+# kubectl get deployments,pods,svc -n deployment-examples

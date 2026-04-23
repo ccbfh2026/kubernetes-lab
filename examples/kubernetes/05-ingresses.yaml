@@ -1,0 +1,176 @@
+# 1. Create a dedicated namespace for ingress examples
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ingress-examples
+  labels:
+    demo: kubernetes
+    section: ingress
+
+---
+# 2. Deploy the first sample app (app1)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app1
+  namespace: ingress-examples
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: app1
+  template:
+    metadata:
+      labels:
+        app: app1
+    spec:
+      containers:
+      - name: app1
+        image: nginx:stable
+        ports:
+        - containerPort: 80
+        volumeMounts:
+        - name: app1-config
+          mountPath: /usr/share/nginx/html
+      volumes:
+      - name: app1-config
+        configMap:
+          name: app1-config
+
+---
+# 3. ConfigMap for app1
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app1-config
+  namespace: ingress-examples
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html>
+    <body style="background-color: #f0f8ff;">
+      <h1>App 1</h1>
+      <p>This is the first application.</p>
+    </body>
+    </html>
+
+---
+# 4. Service for app1
+apiVersion: v1
+kind: Service
+metadata:
+  name: app1-service
+  namespace: ingress-examples
+spec:
+  selector:
+    app: app1
+  ports:
+  - port: 80
+    targetPort: 80
+
+---
+# 5. Deploy the second sample app (app2)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app2
+  namespace: ingress-examples
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: app2
+  template:
+    metadata:
+      labels:
+        app: app2
+    spec:
+      containers:
+      - name: app2
+        image: nginx:stable
+        ports:
+        - containerPort: 80
+        volumeMounts:
+        - name: app2-config
+          mountPath: /usr/share/nginx/html
+      volumes:
+      - name: app2-config
+        configMap:
+          name: app2-config
+
+---
+# 6. ConfigMap for app2
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app2-config
+  namespace: ingress-examples
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html>
+    <body style="background-color: #f5f5dc;">
+      <h1>App 2</h1>
+      <p>This is the second application.</p>
+    </body>
+    </html>
+
+---
+# 7. Service for app2
+apiVersion: v1
+kind: Service
+metadata:
+  name: app2-service
+  namespace: ingress-examples
+spec:
+  selector:
+    app: app2
+  ports:
+  - port: 80
+    targetPort: 80
+
+---
+# 8. Ingress resource (requires ingress controller in Kind)
+# Note: Make sure to install ingress controller in your Kind cluster:
+# kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: demo-ingress
+  namespace: ingress-examples
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+spec:
+  rules:
+  - host: demo.local  # Add this to your hosts file pointing to localhost
+    http:
+      paths:
+      - path: /app1
+        pathType: Prefix
+        backend:
+          service:
+            name: app1-service
+            port:
+              number: 80
+      - path: /app2
+        pathType: Prefix
+        backend:
+          service:
+            name: app2-service
+            port:
+              number: 80
+
+---
+# 9. Setup instructions for testing ingress on Kind
+# a. Install ingress controller:
+#    kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
+# 
+# b. Wait for ingress controller to be ready:
+#    kubectl wait --namespace ingress-nginx --for=condition=ready pod --selector=app.kubernetes.io/component=controller --timeout=90s
+#
+# c. Add to /etc/hosts:
+#    127.0.0.1 demo.local
+#
+# d. Test the ingress:
+#    curl -H "Host: demo.local" http://localhost/app1
+#    curl -H "Host: demo.local" http://localhost/app2

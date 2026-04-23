@@ -1,0 +1,180 @@
+# 1. Create a dedicated namespace for StatefulSet examples
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: statefulset-examples
+  labels:
+    demo: kubernetes
+    section: statefulset
+
+---
+# 2. ConfigMap for Nginx configuration to demonstrate StatefulSet identity
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-config
+  namespace: statefulset-examples
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>StatefulSet Demo</title>
+      <style>
+        body { font-family: Arial, sans-serif; margin: 40px; }
+        .pod-info { padding: 20px; background-color: #f0f0f0; border-radius: 5px; }
+      </style>
+    </head>
+    <body>
+      <h1>StatefulSet Pod</h1>
+      <div class="pod-info">
+        <p><strong>Pod Name:</strong> HOSTNAME</p>
+        <p>StatefulSet pods have stable, predictable names and maintain their identity across rescheduling!</p>
+      </div>
+    </body>
+    </html>
+  nginx.conf: |
+    server {
+      listen 80;
+      server_name localhost;
+      
+      # Ensure proper permissions for the root directory
+      root /usr/share/nginx/html;
+      
+      location / {
+        index index.html index.htm;
+        try_files $uri $uri/ =404;
+        sub_filter_once on;
+        sub_filter 'HOSTNAME' '$hostname';
+      }
+      
+      # Add a health check endpoint
+      location /health {
+        return 200 'healthy\n';
+      }
+    }
+
+---
+# 3. Headless Service for the StatefulSet
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-headless
+  namespace: statefulset-examples
+  labels:
+    app: nginx-stateful
+spec:
+  ports:
+  - port: 80
+    name: web
+  clusterIP: None
+  selector:
+    app: nginx-stateful
+
+---
+# 4. Regular Service to access any StatefulSet pod
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-stateful-service
+  namespace: statefulset-examples
+spec:
+  ports:
+  - port: 80
+    name: web
+  selector:
+    app: nginx-stateful
+  type: ClusterIP
+
+---
+# 5. StatefulSet definition
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: web
+  namespace: statefulset-examples
+spec:
+  serviceName: "nginx-headless"
+  replicas: 3
+  selector:
+    matchLabels:
+      app: nginx-stateful
+  template:
+    metadata:
+      labels:
+        app: nginx-stateful
+    spec:
+      initContainers:
+      - name: init-web
+        image: busybox:1.28
+        command: ['sh', '-c', 'echo "Preparing environment for Nginx" && mkdir -p /usr/share/nginx/html']
+        volumeMounts:
+        - name: www
+          mountPath: /usr/share/nginx/html
+      containers:
+      - name: nginx
+        image: nginx:stable
+        ports:
+        - containerPort: 80
+          name: web
+        volumeMounts:
+        - name: config-volume
+          mountPath: /usr/share/nginx/html/index.html
+          subPath: index.html
+        - name: config-volume
+          mountPath: /etc/nginx/conf.d/default.conf
+          subPath: nginx.conf
+        - name: www
+          mountPath: /usr/share/nginx/html/data
+        # Add a simple command to debug startup issues
+        command:
+        - /bin/sh
+        - -c
+        - |
+          echo "Starting Nginx..."
+          ls -la /usr/share/nginx/html/
+          ls -la /etc/nginx/conf.d/
+          nginx -g "daemon off;"
+      volumes:
+      - name: config-volume
+        configMap:
+          name: nginx-config
+  volumeClaimTemplates:
+  - metadata:
+      name: www
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: "standard"
+      resources:
+        requests:
+          storage: 100Mi
+
+---
+# 6. Demo instructions:
+# 
+# Apply the manifest to create the StatefulSet:
+# kubectl apply -f 08-statefulset.yaml
+#
+# Watch the StatefulSet pods being created in order:
+# kubectl get pods -n statefulset-examples -w
+#
+# Create a persistent debug pod for testing (recommended approach):
+# kubectl run -n statefulset-examples debug --image=curlimages/curl --command -- sleep 3600
+#
+# Then access individual pods via their stable DNS names:
+# kubectl exec -n statefulset-examples debug -- curl web-0.nginx-headless.statefulset-examples.svc.cluster.local
+# kubectl exec -n statefulset-examples debug -- curl web-1.nginx-headless.statefulset-examples.svc.cluster.local
+# kubectl exec -n statefulset-examples debug -- curl web-2.nginx-headless.statefulset-examples.svc.cluster.local
+#
+# Clean up the debug pod when done:
+# kubectl delete pod -n statefulset-examples debug
+#
+# Alternative: Use port-forwarding to access pods directly from your local machine:
+# kubectl port-forward -n statefulset-examples pod/web-0 8080:80
+# curl localhost:8080
+#
+# Demonstrate ordered scaling down (removes highest numbered pod first):
+# kubectl scale statefulset web -n statefulset-examples --replicas=2
+# 
+# Demonstrate ordered scaling up (adds pods in sequence):
+# kubectl scale statefulset web -n statefulset-examples --replicas=3
